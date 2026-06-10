@@ -1,0 +1,17 @@
+# Distributed Compute Operator
+
+## Project Context
+This project is a Kubernetes Operator designed to orchestrate distributed workloads (MPI-lite). It is being built to showcase advanced Kubernetes internals and demonstrate production-level engineering.
+
+## Architecture Details
+- **Custom Resource:** `DistributedJob`
+- **Components Provisioned:**
+  - **Leader Pod:** Coordinates the distributed workload.
+  - **Worker Pods:** Configurable number of replicas for parallel execution.
+  - **Headless Service:** Provides predictable DNS records (e.g., `worker-0`, `worker-1`) without load balancing, enabling direct pod-to-pod communication for tightly coupled, stateful workloads (like MPI).
+- **Garbage Collection:** Uses `OwnerReferences` to ensure generated child resources are automatically cleaned up if the parent `DistributedJob` is deleted.
+
+## Current State
+- Project idea and architectural design are finalized.
+- `README.md` has been written and documented.
+- Next Action: Scaffold the Go project using Kubebuilder (`kubebuilder init`, `kubebuilder create api`) and define the `DistributedJob` schema.
