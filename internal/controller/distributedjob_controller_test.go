@@ -51,7 +51,10 @@ var _ = Describe("DistributedJob Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: hpcv1.DistributedJobSpec{
+						WorkerReplicas: 1,
+						Image:          "test-image:latest",
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
