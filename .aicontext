@@ -13,5 +13,8 @@ This project is a Kubernetes Operator designed to orchestrate distributed worklo
 
 ## Current State
 - Project idea and architectural design are finalized.
-- `README.md` has been written and documented.
-- Next Action: Scaffold the Go project using Kubebuilder (`kubebuilder init`, `kubebuilder create api`) and define the `DistributedJob` schema.
+- `README.md` has been written and fully documents the setup and Windows/Docker workarounds.
+- The project was successfully scaffolded using Kubebuilder.
+- The `DistributedJob` schema has been defined (Spec: `WorkerReplicas`, `Image`, `Command`; Status: `Phase`, `ActiveWorkers`).
+- Code and CRD manifests have been generated (`make generate`, `make manifests`).
+- **Next Action:** Implement the Reconcile loop in `internal/controller/distributedjob_controller.go` to provision the Headless Service and Pods.

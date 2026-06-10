@@ -1,0 +1,9 @@
+apiVersion: hpc.rosalita.github.io/v1
+kind: DistributedJob
+metadata:
+  labels:
+    app.kubernetes.io/name: workspace
+    app.kubernetes.io/managed-by: kustomize
+  name: distributedjob-sample
+spec:
+  # TODO(user): Add fields here
