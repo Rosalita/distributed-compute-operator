@@ -75,6 +75,10 @@ type DistributedJobStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`,description="The current phase of the distributed job"
+// +kubebuilder:printcolumn:name="Workers",type=integer,JSONPath=`.spec.workerReplicas`,description="The desired number of worker replicas"
+// +kubebuilder:printcolumn:name="Active",type=integer,JSONPath=`.status.activeWorkers`,description="The number of currently active worker pods"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // DistributedJob is the Schema for the distributedjobs API
 type DistributedJob struct {

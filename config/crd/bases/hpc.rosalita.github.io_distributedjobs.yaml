@@ -14,7 +14,23 @@ spec:
     singular: distributedjob
   scope: Namespaced
   versions:
-  - name: v1
+  - additionalPrinterColumns:
+    - description: The current phase of the distributed job
+      jsonPath: .status.phase
+      name: Phase
+      type: string
+    - description: The desired number of worker replicas
+      jsonPath: .spec.workerReplicas
+      name: Workers
+      type: integer
+    - description: The number of currently active worker pods
+      jsonPath: .status.activeWorkers
+      name: Active
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
     schema:
       openAPIV3Schema:
         description: DistributedJob is the Schema for the distributedjobs API

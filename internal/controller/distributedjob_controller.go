@@ -19,7 +19,11 @@ package controller
 import (
 	"context"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -36,20 +40,49 @@ type DistributedJobReconciler struct {
 // +kubebuilder:rbac:groups=hpc.rosalita.github.io,resources=distributedjobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=hpc.rosalita.github.io,resources=distributedjobs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=hpc.rosalita.github.io,resources=distributedjobs/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the DistributedJob object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.3/pkg/reconcile
 func (r *DistributedJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	log := logf.FromContext(ctx)
 
-	// TODO(user): your logic here
+	// 1. Fetch the DistributedJob instance
+	var job hpcv1.DistributedJob
+	if err := r.Get(ctx, req.NamespacedName, &job); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Request object not found, could have been deleted after reconcile request.
+			// Return and don't requeue
+			log.Info("DistributedJob resource not found. Ignoring since object must be deleted")
+			return ctrl.Result{}, nil
+		}
+		// Error reading the object - requeue the request.
+		log.Error(err, "Failed to get DistributedJob")
+		return ctrl.Result{}, err
+	}
+
+	// 2. Check if the Headless Service already exists, if not create it
+	svcName := job.Name + "-svc"
+	var svc corev1.Service
+	if err := r.Get(ctx, types.NamespacedName{Name: svcName, Namespace: job.Namespace}, &svc); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Define a new Headless Service
+			newSvc, err := r.serviceForDistributedJob(&job)
+			if err != nil {
+				log.Error(err, "Failed to define new Headless Service for DistributedJob")
+				return ctrl.Result{}, err
+			}
+			log.Info("Creating a new Headless Service", "Service.Namespace", newSvc.Namespace, "Service.Name", newSvc.Name)
+			if err := r.Create(ctx, newSvc); err != nil {
+				log.Error(err, "Failed to create new Headless Service", "Service.Namespace", newSvc.Namespace, "Service.Name", newSvc.Name)
+				return ctrl.Result{}, err
+			}
+			// Service created successfully - return and requeue
+			return ctrl.Result{Requeue: true}, nil
+		}
+		log.Error(err, "Failed to get Headless Service")
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
@@ -58,6 +91,28 @@ func (r *DistributedJobReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 func (r *DistributedJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&hpcv1.DistributedJob{}).
+		Owns(&corev1.Service{}).
 		Named("distributedjob").
 		Complete(r)
+}
+
+// serviceForDistributedJob returns a headless service for the DistributedJob
+func (r *DistributedJobReconciler) serviceForDistributedJob(job *hpcv1.DistributedJob) (*corev1.Service, error) {
+	labelSelector := map[string]string{"app": "distributedjob", "job_name": job.Name}
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      job.Name + "-svc",
+			Namespace: job.Namespace,
+		},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: "None", // This makes it a Headless Service!
+			Selector:  labelSelector,
+		},
+	}
+	// Set DistributedJob instance as the owner and controller
+	if err := ctrl.SetControllerReference(job, svc, r.Scheme); err != nil {
+		return nil, err
+	}
+	return svc, nil
 }
