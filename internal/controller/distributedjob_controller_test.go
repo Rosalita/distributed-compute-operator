@@ -18,9 +18,11 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -76,12 +78,39 @@ var _ = Describe("DistributedJob Controller", func() {
 				Scheme: k8sClient.Scheme(),
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			req := reconcile.Request{
 				NamespacedName: typeNamespacedName,
-			})
+			}
+
+			// 1. First Reconcile creates the Headless Service
+			res, err := controllerReconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+			Expect(res.RequeueAfter).To(Equal(time.Second))
+			svc := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-svc", Namespace: "default"}, svc)).To(Succeed())
+
+			// 2. Second Reconcile creates the Leader Pod
+			res, err = controllerReconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(Equal(time.Second))
+			leaderPod := &corev1.Pod{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-leader", Namespace: "default"}, leaderPod)).To(Succeed())
+
+			// 3. Third Reconcile creates the Worker Pod (WorkerReplicas is 1)
+			res, err = controllerReconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(Equal(time.Second))
+			workerPod := &corev1.Pod{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-worker-0", Namespace: "default"}, workerPod)).To(Succeed())
+
+			// 4. Fourth Reconcile updates the Status
+			res, err = controllerReconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(BeZero()) // No more resources to create!
+			updatedJob := &hpcv1.DistributedJob{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updatedJob)).To(Succeed())
+			Expect(updatedJob.Status.Phase).To(Equal("Pending"))
+			Expect(updatedJob.Status.ActiveWorkers).To(Equal(int32(0)))
 		})
 	})
 })

@@ -94,7 +94,7 @@ For every valid `DistributedJob` resource, this operator automatically provision
 
 The controller uses `OwnerReferences` to ensure that all generated child resources (Pods and Services) are automatically garbage-collected by Kubernetes if the parent `DistributedJob` is deleted.
 
-The controller uses a check and create pattern to reconcile the leader and worker pods. Before creating anything, the controller checks to see if a leader exists using `r.Get` if a leader pod is not found, it creates one with `r.Create`. An important controller concept is that when a resource is created, it takes a few ms for Kubernetes to actually process creation and assign the new pod an ID. By returning `Requeue:true` this tells the controller manager that a modification has been made to the cluster and that a brand new reconciliation loop should start. This ensures that the controller is always acting on the most upd to date cluster state.
+The controller uses a check and create pattern to reconcile the leader and worker pods. Before creating anything, the controller checks to see if a leader exists using `r.Get` if a leader pod is not found, it creates one with `r.Create`. An important controller concept is that when a resource is created, it takes a few ms for Kubernetes to actually process creation and assign the new pod an ID. By returning `RequeueAfter: time.Second` (since `Requeue: true` is now deprecated), this explicitly tells the controller manager that a modification has been made to the cluster and that a brand new reconciliation loop should start after a short delay. This ensures that the controller is always acting on the most up to date cluster state.
 
 Reconciliation of the worker pods is very similar to that of the leader pod except the check and create is wrapped in a loop that runs exactly the `job.Spec.WorkerReplicas` number of times. This means it will check for `worker-0` then `worker-1` etc. If 3 worker pods are required and only 2 exist, this loop guarantees the 3rd worker will be created.
 
@@ -148,6 +148,11 @@ NAME      PHASE     WORKERS   ACTIVE   AGE
 my-job    Running   3         3        2m15s
 ```
 After adding custom markers, `make manifests` needs to be run.
+
+# Testing (How is this tested?)
+The default test that Kubebuilder scaffolds just calls `Reconcile` once and checks if it crashed. However because the `DistributedJob` controller returns `RequeueAfter` with a delay after creating the headless service, leader pod and each worker pod, it takes multiple passes through the Reconcile loop to reach the desired state.
+
+This can be tested by calling `Reconcile` multiple times and verifying that the correct resources are created at each step. The test for the controller expects the status to the `Pending` and the number of active workers to be `0`. This is because Kubebuilder sets up a testing environment called `envtest`. This spins up a real Kubernetes API and etcd database locally, but it **does not** spin up a Kubelet. In a cluster, a Kubelet runs on every node to enable the control plane to control each node. The Kubelet is what monitors the health of pods through liveness and readiness checks. It can restart failed containers and mark pods unready if they crash. Without a Kublet in the testing environment, there is no engine to actually "run" containers. The pods that are created in tests are saved to the API, but their `Phase` will always stay empty or `Pending`. This is the exact behaviour in a real cluster while the images are waiting to be pulled.
 
 # License
 

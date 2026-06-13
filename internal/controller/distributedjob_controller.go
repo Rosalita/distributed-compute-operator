@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -80,7 +81,7 @@ func (r *DistributedJobReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				return ctrl.Result{}, err
 			}
 			// Service created successfully - return and requeue
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
 		log.Error(err, "Failed to get Headless Service")
 		return ctrl.Result{}, err
@@ -102,7 +103,7 @@ func (r *DistributedJobReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 		// Requeue to ensure the leader is created before moving to workers
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: time.Second}, nil
 	} else if err != nil {
 		log.Error(err, "Failed to get Leader Pod")
 		return ctrl.Result{}, err
@@ -125,7 +126,7 @@ func (r *DistributedJobReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				return ctrl.Result{}, err
 			}
 			// Requeue until all worker replicas are successfully created
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: time.Second}, nil
 		} else if err != nil {
 			log.Error(err, "Failed to get Worker Pod")
 			return ctrl.Result{}, err
