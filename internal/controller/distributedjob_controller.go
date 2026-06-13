@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -41,6 +42,7 @@ type DistributedJobReconciler struct {
 // +kubebuilder:rbac:groups=hpc.rosalita.github.io,resources=distributedjobs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=hpc.rosalita.github.io,resources=distributedjobs/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -84,6 +86,82 @@ func (r *DistributedJobReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
+	// 3. Reconcile the Leader Pod
+	leaderName := fmt.Sprintf("%s-leader", job.Name)
+	leaderPod := &corev1.Pod{}
+	err := r.Get(ctx, types.NamespacedName{Name: leaderName, Namespace: job.Namespace}, leaderPod)
+	if err != nil && apierrors.IsNotFound(err) {
+		pod, err := r.podForJob(&job, leaderName, "leader")
+		if err != nil {
+			log.Error(err, "Failed to define new Leader Pod")
+			return ctrl.Result{}, err
+		}
+		log.Info("Creating a new Leader Pod", "Pod.Namespace", pod.Namespace, "Pod.Name", pod.Name)
+		if err = r.Create(ctx, pod); err != nil {
+			log.Error(err, "Failed to create new Leader Pod", "Pod.Namespace", pod.Namespace, "Pod.Name", pod.Name)
+			return ctrl.Result{}, err
+		}
+		// Requeue to ensure the leader is created before moving to workers
+		return ctrl.Result{Requeue: true}, nil
+	} else if err != nil {
+		log.Error(err, "Failed to get Leader Pod")
+		return ctrl.Result{}, err
+	}
+
+	// 4. Reconcile Worker Pods
+	for i := int32(0); i < job.Spec.WorkerReplicas; i++ {
+		workerName := fmt.Sprintf("%s-worker-%d", job.Name, i)
+		workerPod := &corev1.Pod{}
+		err := r.Get(ctx, types.NamespacedName{Name: workerName, Namespace: job.Namespace}, workerPod)
+		if err != nil && apierrors.IsNotFound(err) {
+			pod, err := r.podForJob(&job, workerName, "worker")
+			if err != nil {
+				log.Error(err, "Failed to define new Worker Pod")
+				return ctrl.Result{}, err
+			}
+			log.Info("Creating a new Worker Pod", "Pod.Namespace", pod.Namespace, "Pod.Name", pod.Name)
+			if err = r.Create(ctx, pod); err != nil {
+				log.Error(err, "Failed to create new Worker Pod", "Pod.Namespace", pod.Namespace, "Pod.Name", pod.Name)
+				return ctrl.Result{}, err
+			}
+			// Requeue until all worker replicas are successfully created
+			return ctrl.Result{Requeue: true}, nil
+		} else if err != nil {
+			log.Error(err, "Failed to get Worker Pod")
+			return ctrl.Result{}, err
+		}
+	}
+
+	// 5. Update Status
+	podList := &corev1.PodList{}
+	listOpts := []client.ListOption{
+		client.InNamespace(job.Namespace),
+		client.MatchingLabels(map[string]string{"job_name": job.Name}),
+	}
+	if err := r.List(ctx, podList, listOpts...); err != nil {
+		log.Error(err, "Failed to list pods", "DistributedJob.Namespace", job.Namespace, "DistributedJob.Name", job.Name)
+		return ctrl.Result{}, err
+	}
+
+	var activeWorkers int32 = 0
+	for _, pod := range podList.Items {
+		if pod.Labels["role"] == "worker" && pod.Status.Phase == corev1.PodRunning {
+			activeWorkers++
+		}
+	}
+
+	job.Status.ActiveWorkers = activeWorkers
+	if activeWorkers == job.Spec.WorkerReplicas {
+		job.Status.Phase = "Running"
+	} else {
+		job.Status.Phase = "Pending"
+	}
+
+	if err := r.Status().Update(ctx, &job); err != nil {
+		log.Error(err, "Failed to update DistributedJob status")
+		return ctrl.Result{}, err
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -92,6 +170,7 @@ func (r *DistributedJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&hpcv1.DistributedJob{}).
 		Owns(&corev1.Service{}).
+		Owns(&corev1.Pod{}).
 		Named("distributedjob").
 		Complete(r)
 }
@@ -115,4 +194,37 @@ func (r *DistributedJobReconciler) serviceForDistributedJob(job *hpcv1.Distribut
 		return nil, err
 	}
 	return svc, nil
+}
+
+// podForJob returns a Pod object for the DistributedJob
+func (r *DistributedJobReconciler) podForJob(job *hpcv1.DistributedJob, name string, role string) (*corev1.Pod, error) {
+	labels := map[string]string{
+		"app":      "distributedjob",
+		"job_name": job.Name,
+		"role":     role,
+	}
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: job.Namespace,
+			Labels:    labels,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:    "compute",
+				Image:   job.Spec.Image,
+				Command: job.Spec.Command,
+			}},
+			RestartPolicy: corev1.RestartPolicyNever,
+			Hostname:      name,
+			Subdomain:     job.Name + "-svc", // Must match the Headless Service name exactly
+		},
+	}
+
+	// Set DistributedJob instance as the owner and controller
+	if err := ctrl.SetControllerReference(job, pod, r.Scheme); err != nil {
+		return nil, err
+	}
+	return pod, nil
 }

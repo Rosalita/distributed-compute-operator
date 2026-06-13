@@ -84,7 +84,8 @@ By creating a "Headless" service (which means `ClusterIP:None` is set) Kubernete
 
 The distributed controller fetches the `DistributedJob` from the cluster. Then checks if a headless service already exists. If no headless service exists, it creates one and links it to the `DistributedJob` using `SetControllerReference`. This means that if the user deletes the job, Kubernetes automatically cleans up the headless service.
 
-Because the controller is going to manage Kubernetes services, we have to tell Kubebuilder to generate the permissions (RBAC - role-based access control) to allow our operator to do that. The `Owns()` function in `SetupWithManager` tells the controller to "watch" services that are owned by a `DistributedJob` if someone accidentally deletes the Headless service, this ensures the controller loop will immediately recreate it.
+Because the controller is going to manage Kubernetes services, we have to tell Kubebuilder to generate the permissions (RBAC - role-based access control) to allow our operator to do that. The `Owns()` function in `SetupWithManager` tells the controller to "watch" services that are owned by a `DistributedJob` if someone accidentally deletes the Headless service, this ensures the controller loop will immediately recreate it. The controller is also granted access to manage and watch pods, which it needs to be able to manage the leader and worker pods. 
+
 
 For every valid `DistributedJob` resource, this operator automatically provisions a tightly coupled topology:
 1. A **Leader Pod** responsible for coordinating the distributed workload.
@@ -92,6 +93,19 @@ For every valid `DistributedJob` resource, this operator automatically provision
 3. A **Headless Service** to provide predictable DNS records (e.g., `worker-0`, `worker-1`) to enable direct pod-to-pod communication (bypassing load balancing), which is essential for MPI (Message Passing Interface) and other tightly coupled HPC workloads.
 
 The controller uses `OwnerReferences` to ensure that all generated child resources (Pods and Services) are automatically garbage-collected by Kubernetes if the parent `DistributedJob` is deleted.
+
+The controller uses a check and create pattern to reconcile the leader and worker pods. Before creating anything, the controller checks to see if a leader exists using `r.Get` if a leader pod is not found, it creates one with `r.Create`. An important controller concept is that when a resource is created, it takes a few ms for Kubernetes to actually process creation and assign the new pod an ID. By returning `Requeue:true` this tells the controller manager that a modification has been made to the cluster and that a brand new reconciliation loop should start. This ensures that the controller is always acting on the most upd to date cluster state.
+
+Reconciliation of the worker pods is very similar to that of the leader pod except the check and create is wrapped in a loop that runs exactly the `job.Spec.WorkerReplicas` number of times. This means it will check for `worker-0` then `worker-1` etc. If 3 worker pods are required and only 2 exist, this loop guarantees the 3rd worker will be created.
+
+The controller finally updates the status. It gets a list of all pods in the namespace that have the label `job_name:my-job` then loops through that list, counting how many worker pods have started and reached the phase `Running`. Then the `DistributedJob` in-memory object is updated with the `activeWorkers` count. If the number of running workers matches what the user specified in the Spec, the whole job is marked as `Running`. This updated status is then pushed back to the Kubernete API using `r.Status().Update`.
+
+
+## Leader Pod
+The Leader Pod is responsible for coordinating the distributed workload. The controller checks if a pod named `<job-name>-leader` exists. If not, it defines a new Pod manifest ensuring the `Hostname` is set to the pod's name, and the `Subdomain` matches the Headless Service. This guarantees the pod gets a predictable DNS address. Once created, the controller requeues the request to confirm the leader is running before provisioning workers.
+
+## Worker Pod
+Worker Pods execute the parallel tasks of the distributed job. The controller loops `WorkerReplicas` times (specified in the Custom Resource) and checks for pods named `<job-name>-worker-0`, `<job-name>-worker-1`, etc. If any are missing, they are created with the same `Hostname` and `Subdomain` networking configuration as the leader. This allows worker-to-worker and worker-to-leader communication over predictable DNS endpoints without needing a load balancer in between.
 
 # Development Guide (How was it built?)
 Kubebuilder was used to scaffold this project.
