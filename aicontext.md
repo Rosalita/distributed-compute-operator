@@ -32,7 +32,14 @@ A custom Kubernetes Operator built with Kubebuilder to orchestrate distributed w
 - Explained the Headless Service predictable DNS trick (bypassing load balancers so workers can communicate directly).
 - Documented the test suite quirks (missing Kubelet in envtest).
 
+### 5. Live Cluster Testing
+- Successfully ran the operator on a local Docker Desktop cluster.
+- Bypassed Windows `Makefile` issues by using `kubectl apply -k config/crd` and `go run ./cmd/main.go`.
+- Applied the sample `DistributedJob` and verified that the controller created the Headless Service, Leader pod, and Worker pods.
+- Confirmed that pods reached the `Running` state.
+- Verified garbage collection by deleting the `DistributedJob` and observing the automatic cleanup of child resources.
+- Updated `README.md` with Windows workarounds and clarifications on `image`/`command` usage for all pods.
+
 ## Next Steps
-- Test the operator on a live local cluster (e.g., Kind or Docker Desktop) to see Pods reach the `Running` phase.
 - Implement garbage collection/OwnerReference unit tests.
 - Add end-to-end (e2e) tests.
