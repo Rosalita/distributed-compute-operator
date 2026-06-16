@@ -28,24 +28,57 @@ Make sure your local Kubernetes cluster is running, then apply the Custom Resour
 make install
 ```
 
+This command uses Kustomize to apply the CRD manifests to your cluster. If customise is not available (for example if running on Windows) kubectl has Kustomize built in so this command can be used instead
+
+```
+kubectl apply -k config/crd
+```
+
+To check if the CRD has applied to the cluster, use
+
+```
+kubectl get crds
+```
+
+and you should see something like
+```
+NAME                                     CREATED AT
+distributedjobs.hpc.rosalita.github.io   2026-06-16T08:15:41Z
+```
+
 ### 3. Run the controller locally
 You can run the controller directly on your host machine (outside the cluster) for easy debugging and development:
 ```bash
 make run
 ```
 
+If you need to bypass the make file (for example running on Windows) simply
+
+```
+go run ./cmd/main.go
+```
+
 ### 4. Create a DistributedJob instance
-In a new terminal window, apply the sample custom resource:
+In a new terminal window, apply the sample job that Kubebuilder generated:
 ```bash
 kubectl apply -f config/samples/hpc_v1_distributedjob.yaml
 ```
 
-You can then observe the Operator creating the associated Pods and Headless Service:
+When this command is run, the controller will:
+- Detect the distributed job
+- Create a new headless service
+- Create a leaderpod
+- Loop and create the desired number of worker pods
+
+
+You can then observe the created Pods and Headless Service with:
 ```bash
 kubectl get distributedjobs
 kubectl get pods
 kubectl get services
 ```
+The leader and worker pods will be running the image and command specified in `config/samples/hpc_v1_distributedjob.yaml`.
+
 
 ## Cleaning Up
 
@@ -58,6 +91,13 @@ To uninstall the CRDs from your cluster:
 ```bash
 make uninstall
 ```
+
+Or 
+
+```
+kubectl delete crd distributedjobs.hpc.rosalita.github.io
+```
+
 
 # Architecture (How does it work?)
 
@@ -102,10 +142,10 @@ The controller finally updates the status. It gets a list of all pods in the nam
 
 
 ## Leader Pod
-The Leader Pod is responsible for coordinating the distributed workload. The controller checks if a pod named `<job-name>-leader` exists. If not, it defines a new Pod manifest ensuring the `Hostname` is set to the pod's name, and the `Subdomain` matches the Headless Service. This guarantees the pod gets a predictable DNS address. Once created, the controller requeues the request to confirm the leader is running before provisioning workers.
+The Leader Pod is responsible for coordinating the distributed workload. The controller checks if a pod named `<job-name>-leader` exists. If not, it defines a new Pod manifest ensuring the `Hostname` is set to the pod's name, and the `Subdomain` matches the Headless Service. This guarantees the pod gets a predictable DNS address. The container within this pod runs the `image` and `command` specified in the `DistributedJob` spec. Once created, the controller requeues the request to confirm the leader is running before provisioning workers.
 
 ## Worker Pod
-Worker Pods execute the parallel tasks of the distributed job. The controller loops `WorkerReplicas` times (specified in the Custom Resource) and checks for pods named `<job-name>-worker-0`, `<job-name>-worker-1`, etc. If any are missing, they are created with the same `Hostname` and `Subdomain` networking configuration as the leader. This allows worker-to-worker and worker-to-leader communication over predictable DNS endpoints without needing a load balancer in between.
+Worker Pods execute the parallel tasks of the distributed job. The controller loops `WorkerReplicas` times (specified in the Custom Resource) and checks for pods named `<job-name>-worker-0`, `<job-name>-worker-1`, etc. If any are missing, they are created with the same `Hostname` and `Subdomain` networking configuration as the leader. Like the leader, they run the exact same `image` and `command` from the spec. This allows worker-to-worker and worker-to-leader communication over predictable DNS endpoints without needing a load balancer in between.
 
 # Development Guide (How was it built?)
 Kubebuilder was used to scaffold this project.

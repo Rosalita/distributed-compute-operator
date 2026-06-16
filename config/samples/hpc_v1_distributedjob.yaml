@@ -8,4 +8,4 @@ metadata:
 spec:
   workerReplicas: 3
   image: "busybox:1.28"
-  command: ["sh", "-c", "echo 'Hello from worker!' && sleep 3600"]
+  command: ["sh", "-c", "echo 'Pod is running...' && sleep 3600"]
